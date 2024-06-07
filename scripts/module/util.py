@@ -3,7 +3,7 @@ import pandas as pd
 import pandas.api.types
 
 from typing import Union
-
+from sklearn.metrics import average_precision_score as APS
 
 class ParticipantVisibleError(Exception):
     pass
@@ -131,3 +131,10 @@ def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: 
                 scores.append(score)
 
     return np.mean(scores)
+
+
+def get_score(target, preds):
+    aps0 = APS(target[:,0], preds[:,0], average="micro")
+    aps1 = APS(target[:,1], preds[:,1], average="micro")
+    aps2 = APS(target[:,2], preds[:,2], average="micro")
+    return (aps0 + aps1 + aps2) / 3

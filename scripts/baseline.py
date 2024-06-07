@@ -12,7 +12,7 @@
 # * Add more features like a one hot encoding of bb2 or bb3.
 # * And of course ensembling with GBDT models.
 
-# In[126]:
+# In[44]:
 
 
 import gc
@@ -28,45 +28,52 @@ from sklearn.metrics import average_precision_score as APS
 import polars as pl
 
 
-# In[127]:
+# In[45]:
 
 
+import gc
+import os
+import pickle
+import random
+import joblib
+import pandas as pd
+# import polars as pd
 from tqdm import tqdm
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import StratifiedKFold
+import numpy as np
 import torch.nn.functional as F
 
 
-# In[128]:
+# In[46]:
 
 
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     
     SEED = 42
-    EPOCHS = 10
+    EPOCHS = 9*12
     BATCH_SIZE = 4096
     LR = 1e-3
-    WD = 0.05
-    PATIENCE = 100
+    WD = 1e-6
+    PATIENCE = 10
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     NBR_FOLDS = 15
     SELECTED_FOLDS = [0]
     
     
 if Config.DEBUG:
-    n_rows = 10**3
+    n_rows = 10**4
 else:
     n_rows = None
-    
-
-
-# In[129]:
+# print config
+print(Config.EPOCHS, Config.BATCH_SIZE, Config.LR, Config.WD, Config.PATIENCE, Config.DEVICE, n_rows)
 
 
 if Config.KAGGLE_NOTEBOOK:
@@ -83,7 +90,7 @@ else:
 TRAIN_DATA_NAME = "train_enc.parquet"
 
 
-# In[130]:
+# In[48]:
 
 
 def set_seeds(seed):
@@ -99,7 +106,7 @@ train_file_list
 
 # # Preprocessing
 
-# In[131]:
+# In[49]:
 
 
 if Config.PREPROCESS:
@@ -138,7 +145,7 @@ else:
     test = test.to_pandas()
 
 
-# In[132]:
+# In[50]:
 
 
 def prepare_data(train, train_idx, valid_idx, features, targets, device):
@@ -175,7 +182,7 @@ def prepare_dataloader(train, val, features, targets, device):
     
 
 
-# In[133]:
+# In[51]:
 
 
 
@@ -220,10 +227,10 @@ class Trainer:
         patience_counter = 0
         # valを固定 
         val = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
-        print("loaded val data", val.shape, train_file_list[9])
+        # print("loaded val data", val.shape, train_file_list[9])
         for epoch in range(epochs):
             train = pl.read_parquet(train_file_list[epoch % 9], n_rows=n_rows).to_pandas()
-            print("loaded train data", train.shape, train_file_list[epoch % 9])
+            # print("loaded train data", train.shape, train_file_list[epoch % 9])
             
             train_loader, valid_loader, X_val, y_val = prepare_dataloader(train, val, FEATURES, TARGETS, Config.DEVICE)
             
@@ -266,21 +273,8 @@ def predict_in_batches(model, data, batch_size):
     return torch.cat(preds, dim=0)
 
 
-# In[134]:
+# In[52]:
 
-
-class SimpleNN(nn.Module):
-    def __init__(self):
-        super(SimpleNN, self).__init__()
-        # モデルの層を定義します
-        self.layer = nn.Sequential(
-            nn.Linear(142, 128),
-            nn.ReLU(),
-            nn.Linear(128, 3)
-        )
-    
-    def forward(self, x):
-        return self.layer(x)
 
 class CNNModel(nn.Module):
     def __init__(self):
@@ -341,7 +335,7 @@ class ImprovedCNNModel(nn.Module):
         return x
 
 
-# In[135]:
+# In[53]:
 
 
 class RNNModel(nn.Module):
@@ -375,22 +369,62 @@ class RNNModel(nn.Module):
         return x
 
 
-# In[136]:
+# In[54]:
 
 
-"TODO: なぜかスコアが0.027程度．コピーしたノートは0.39くらい．データ数の違い？ロスが下がらない"
-"TODO: balanced dataを使って．cvが0.2程度．kaggleノートでも0.04程度．どこが原因かわからない"
-# 全データで少なくとも1エポック1hくらい
+import torch
+import torch.nn as nn
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim=142, input_dim_embedding=37, hidden_dim=128, lstm_layers=2, output_dim=3, dropout_prob=0.1):
+        super(LSTMModel, self).__init__()
+        
+        # Embedding layer
+        self.embedding = nn.Embedding(num_embeddings=input_dim_embedding, embedding_dim=hidden_dim, padding_idx=0)
+        
+        # LSTM layers
+        self.lstm = nn.LSTM(input_size=hidden_dim, hidden_size=hidden_dim, num_layers=lstm_layers, batch_first=True, dropout=dropout_prob)
+        
+        # Fully connected layers
+        self.fc1 = nn.Linear(hidden_dim * input_dim, 1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.fc3 = nn.Linear(512, output_dim)
+        
+        # Dropout layer
+        self.dropout = nn.Dropout(dropout_prob)
+        
+        # Activation function
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.embedding(x.long())  # Ensure input is LongTensor
+        x, (hn, cn) = self.lstm(x)
+        x = x.contiguous().view(x.size(0), -1)  # Flatten the tensor
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
+        x = self.fc3(x)
+        return x
+
+
+# In[55]:
+
+
+# なぜかスコアが0.027程度．コピーしたノートは0.39くらい．データ数の違い？ロスが下がらない
+# balanced dataを使って．cvが0.2程度．kaggleノートでも0.04程度．どこが原因かわからない
+# BCEwithLogitsLossでロスはまえより下がるようになったが，スコアはあがらない
+#　原因はweight decayが高すぎた．10**-6にした
+"TODO:適合不足の可能性があるので，訓練スコアを見る "
+"TODO: モニター指標としてAPSを使う"
 
 # 定数やモデルの定義は適宜修正してください
 FEATURES = [f'enc{i}' for i in range(142)]
 TARGETS = ['bind1', 'bind2', 'bind3']
 
 
-# cross entoropy
-# weightを付けてもかわらない
-criterion = nn.CrossEntropyLoss()
-model = ImprovedCNNModel().to(Config.DEVICE)
+
+pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
+criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+model = LSTMModel().to(Config.DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 
 # StratifiedKFoldの設定
@@ -399,19 +433,19 @@ all_preds = []
 
 
 # データの準備
-# train_loader, valid_loader, X_val, y_val = prepare_data(train, train_idx, valid_idx, FEATURES, TARGETS, Config.DEVICE)
+train = pl.read_parquet(train_file_list[0], n_rows=n_rows).to_pandas()
 trainer = Trainer(model, criterion, optimizer, Config.DEVICE, Config.PATIENCE)
-
 trainer.train(train_file_list, Config.EPOCHS)
 
 # 最良のモデルをロードして予測を行う
 model.load_state_dict(torch.load(os.path.join(MODEL_DIR, 'best_model.pt')))
-    
-# oof = predict_in_batches(model, X_val, Config.BATCH_SIZE)
-# print('Val score =', APS(y_val.cpu().numpy(), oof.detach().cpu().numpy(), average='micro'))
+
+val = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
+_, _, X_val, y_val = prepare_dataloader(val, val, FEATURES, TARGETS, Config.DEVICE)
+oof = predict_in_batches(model, X_val, Config.BATCH_SIZE)
+print('Val score =', APS(y_val.cpu().numpy(), oof.detach().cpu().numpy(), average='micro'))
 
 test_tensor = torch.tensor(test.values, dtype=torch.float32).to(Config.DEVICE)
-"TODO: バッチ処理するべき？ 1にしなくていいの？"
 preds = predict_in_batches(model, test_tensor, Config.BATCH_SIZE)
 all_preds.append(preds)
 
@@ -420,7 +454,18 @@ all_preds.append(preds)
 preds = np.mean(all_preds, axis=0)
 
 
-# In[ ]:
+# In[69]:
+
+
+# trainのスコア
+train = pl.read_parquet(train_file_list[0], n_rows=n_rows).to_pandas()
+targets = train[TARGETS].values
+train_tensor = torch.tensor(train[FEATURES].values, dtype=torch.float32).to(Config.DEVICE)
+train_preds = predict_in_batches(model, train_tensor, Config.BATCH_SIZE)
+print('Train score =', APS(targets, train_preds.detach().cpu().numpy(), average='micro'))
+
+
+# In[68]:
 
 
 # local testの予測と結果
@@ -432,18 +477,18 @@ local_test_tensor = torch.tensor(local_test[FEATURES].values, dtype=torch.float3
 local_preds = predict_in_batches(model, local_test_tensor, Config.BATCH_SIZE)
 
 # calculate score
-score = APS(target, local_preds.detach().cpu().numpy(), average='micro')
+score = APS(target, local_preds.detach().cpu().numpy(), average="micro")
 print('local test score =', score)
 
 
 # # Submission
 
-# In[ ]:
+# In[58]:
 
 
 
 # テストデータの読み込み
-tst = pd.read_parquet(os.path.join(RAW_DIR, "test.parquet"))
+tst = pl.read_parquet(os.path.join(RAW_DIR, "test.parquet"), n_rows=None).to_pandas()
 
 # 'binds'列を追加して初期化
 tst['binds'] = 0
@@ -463,16 +508,4 @@ tst.loc[mask_sEH, 'binds'] = preds[mask_sEH][:, 2]
 submission = tst[['id', 'binds']].copy()
 # 'id'と'binds'列をCSVに出力
 submission.to_csv(os.path.join(OUTPUT_DIR,'submission.csv'), index=False)
-
-
-# In[ ]:
-
-
-submission
-
-
-# In[ ]:
-
-
-
 
