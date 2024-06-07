@@ -1,6 +1,10 @@
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+import math
+import numpy as np
 
 class CNNModel(nn.Module):
     def __init__(self):
@@ -122,3 +126,52 @@ class LSTMModel(nn.Module):
         x = self.fc3(x)
         return x
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=160, device='cpu'):
+        super(PositionalEncoding, self).__init__()
+        self.pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        self.pe[:, 0::2] = torch.sin(position * div_term)
+        self.pe[:, 1::2] = torch.cos(position * div_term)
+        self.pe = self.pe.unsqueeze(0).to(device)  # move self.pe to the GPU
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1)]
+        return x
+
+class TransformerModel(nn.Module):
+    def __init__(self, input_dim=142, input_dim_embedding=37, embed_dim=128, num_heads=8, num_layers=2, output_dim=3, dropout_prob=0.1, device='cpu'):
+        super(TransformerModel, self).__init__()
+        
+        # Positional encoding
+        self.pos_encoder = PositionalEncoding(embed_dim, device=device)
+        
+        # Embedding layer
+        self.embedding = nn.Embedding(num_embeddings=input_dim_embedding, embedding_dim=embed_dim, padding_idx=0)
+        
+        
+        # Transformer encoder layers
+        encoder_layers = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dim_feedforward=512, dropout=dropout_prob)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
+        
+        # Fully connected layers
+        self.fc1 = nn.Linear(embed_dim * input_dim, 1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.fc3 = nn.Linear(512, output_dim)
+        
+        # Dropout layer
+        self.dropout = nn.Dropout(dropout_prob)
+        
+        # Activation function
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.embedding(x.long())  # Ensure input is LongTensor
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        x = x.contiguous().view(x.size(0), -1)  # Flatten the tensor
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
+        x = self.fc3(x)
+        return x
