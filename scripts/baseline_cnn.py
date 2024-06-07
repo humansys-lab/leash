@@ -12,6 +12,8 @@
 # * Add more features like a one hot encoding of bb2 or bb3.
 # * And of course ensembling with GBDT models.
 
+# In[1]:
+
 
 import gc
 import os
@@ -36,8 +38,6 @@ from module import network, dataset, util
 from importlib import reload
 
 
-# In[2]:
-
 
 class Config:
     PREPROCESS = False
@@ -45,7 +45,7 @@ class Config:
     DEBUG = False
     
     SEED = 42
-    EPOCHS = 2
+    EPOCHS = 9*10
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -56,7 +56,7 @@ class Config:
     
     
 if Config.DEBUG:
-    n_rows = 10**5
+    n_rows = 10**4
 else:
     n_rows = None
     
@@ -79,6 +79,8 @@ else:
 TRAIN_DATA_NAME = "train_enc.parquet"
 
 
+# In[4]:
+
 
 def set_seeds(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -91,11 +93,19 @@ train_file_list = [f"../data/chuncked-dataset/local_train_enc_{i}.parquet" for i
 train_file_list
 
 
+# # Preprocessing
+
+# In[5]:
+
+
 
 # train = pl.read_parquet(os.path.join(PROCESSED_DIR, TRAIN_DATA_NAME), n_rows=n_rows)
 test = pl.read_parquet(os.path.join(PROCESSED_DIR, 'test_enc.parquet'), n_rows=n_rows)
 # train = train.to_pandas()
 test = test.to_pandas()
+
+
+# In[6]:
 
 
 
@@ -131,6 +141,9 @@ def prepare_dataloader(train, val, features, targets, device):
     valid_loader = DataLoader(valid_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
     
     return train_loader, valid_loader, X_val, y_val
+
+
+# In[7]:
 
 
 
@@ -222,6 +235,7 @@ def predict_in_batches(model, data, batch_size):
 
 
 
+
 # なぜかスコアが0.027程度．コピーしたノートは0.39くらい．データ数の違い？ロスが下がらない
 # balanced dataを使って．cvが0.2程度．kaggleノートでも0.04程度．どこが原因かわからない
 # BCEwithLogitsLossでロスはまえより下がるようになったが，スコアはあがらない
@@ -237,7 +251,7 @@ TARGETS = ['bind1', 'bind2', 'bind3']
 
 pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-model = network.TransformerModel(device=Config.DEVICE).to(Config.DEVICE)
+model = network.ImprovedCNNModel().to(Config.DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 
 # StratifiedKFoldの設定
@@ -293,6 +307,10 @@ print("Local test score = ", util.get_score(target, local_preds.detach().cpu().n
 
 
 
+# # Submission
+
+# In[ ]:
+
 
 
 # テストデータの読み込み
@@ -316,5 +334,6 @@ tst.loc[mask_sEH, 'binds'] = preds[mask_sEH][:, 2]
 submission = tst[['id', 'binds']].copy()
 # 'id'と'binds'列をCSVに出力
 submission.to_csv(os.path.join(OUTPUT_DIR,'submission.csv'), index=False)
+
 
 
