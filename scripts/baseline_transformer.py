@@ -42,10 +42,10 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
-    EPOCHS = 2
+    EPOCHS = 9
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -53,13 +53,17 @@ class Config:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     NBR_FOLDS = 15
     SELECTED_FOLDS = [0]
+    EARLY_STOPPING = False
     
     
 if Config.DEBUG:
-    n_rows = 10**5
+    n_rows = 10**6
 else:
     n_rows = None
-    
+
+# print Config
+print("Config: ", Config.__dict__)
+print("n_rows: ", n_rows)
 
 
 # In[3]:
@@ -186,17 +190,22 @@ class Trainer:
             val_loss = self.validate(valid_loader)
             # APSも計算
             print(f'Epoch {epoch+1}/{epochs}, Train Loss: {epoch_loss:.4f},  Val Loss: {val_loss:.4f} ')
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
-                patience_counter = 0
+            
+            if Config.EARLY_STOPPING:
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
+                    print(f"model saved")
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= self.patience:
+                        print('Early stopping')
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= self.patience:
-                    print('Early stopping')
-                    break
-
+                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, f'best_model.pt'))
+                print(f"model saved")
+                
         return best_val_loss
 
     # 1行ずつ予測(メモリ節約)
@@ -237,7 +246,8 @@ TARGETS = ['bind1', 'bind2', 'bind3']
 
 pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-model = network.TransformerModel(device=Config.DEVICE).to(Config.DEVICE)
+# model = network.TransformerModel(device=Config.DEVICE).to(Config.DEVICE)
+model = network.ImprovedCNNModel().to(Config.DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 
 # StratifiedKFoldの設定
