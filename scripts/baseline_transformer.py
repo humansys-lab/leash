@@ -45,7 +45,7 @@ class Config:
     DEBUG = True
     
     SEED = 42
-    EPOCHS = 9
+    EPOCHS = 9*2
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -246,8 +246,10 @@ TARGETS = ['bind1', 'bind2', 'bind3']
 
 pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-# model = network.TransformerModel(device=Config.DEVICE).to(Config.DEVICE)
-model = network.ImprovedCNNModel().to(Config.DEVICE)
+model = network.TransformerModel(device=Config.DEVICE).to(Config.DEVICE)
+model_path = os.path.join(MODEL_DIR, 'tf_small_9.pt')
+model.load_state_dict(torch.load(model_path))
+print(f"model loaded {model_path}")
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 
 # StratifiedKFoldの設定
@@ -277,8 +279,6 @@ all_preds.append(preds)
 preds = np.mean(all_preds, axis=0)
 
 
-# In[ ]:
-
 
 # trainのスコア
 train = pl.read_parquet(train_file_list[0], n_rows=n_rows).to_pandas()
@@ -288,7 +288,6 @@ train_preds = predict_in_batches(model, train_tensor, Config.BATCH_SIZE)
 print("Train score = ", util.get_score(targets, train_preds.detach().cpu().numpy()))
 
 
-# In[ ]:
 
 
 # local testの予測と結果
