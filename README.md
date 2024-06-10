@@ -17,6 +17,7 @@ docker attach kaggle
 ## 実行手順
 1. ```scripts/dataset.ipynb```を実行し，チャンクデータセットを取得．もともとのデータが大きくメモリ効率が悪いため，チャンクに分けてモデル構築するのが目的．
 
+
 2. ```scripts/baseline_{MODEL NAME}.py```を実行．
 実験をしたい場合は```scripts/baseline.ipynb```を推奨．
 これまでちゃんと計算を回したのはCNNとLSTM．
