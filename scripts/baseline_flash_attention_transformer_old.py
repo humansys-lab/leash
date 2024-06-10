@@ -1,19 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In this notebook we will train a deep learning model using all the data available !
-# * preprocessing : I encoded the smiles of all the train & test set and saved it [here](https://www.kaggle.com/datasets/ahmedelfazouan/belka-enc-dataset) , this may take up to 1 hour on TPU.
-# * Training & Inference : I used a simple 1dcnn model trained on 20 epochs.
-# 
-# How to improve :
-# * Try a different architecture : I'm able to get an LB score of 0.604 with minor changes on this architecture.
-# * Try another model like Transformer, or LSTM.
-# * Train for more epochs.
-# * Add more features like a one hot encoding of bb2 or bb3.
-# * And of course ensembling with GBDT models.
-
-# In[1]:
-
 
 import gc
 import os
@@ -45,10 +29,10 @@ from functools import partial
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
-    EPOCHS = 9*2
+    EPOCHS = 9
     BATCH_SIZE = 4096
     LR = 1e-4
     WD = 1e-6
@@ -64,8 +48,10 @@ if Config.DEBUG:
 else:
     n_rows = None
     
-print(f"Config: {Config.__dict__}")
-print(n_rows)
+print("Config: ", Config.__dict__)
+print("n_rows: ", n_rows)
+
+
 
 # In[3]:
 
@@ -98,7 +84,10 @@ train_file_list = [f"../data/chuncked-dataset/local_train_enc_{i}.parquet" for i
 mask_file_list = [f"../data/chuncked-dataset/local_train_mask_{i}.parquet" for i in range(10)]
 
 
+# # Preprocessing
+
 # In[5]:
+
 
 
 
@@ -266,12 +255,9 @@ class Net(nn.Module):
 
         # --------------------------
         output = {}
-        "TODO: lossとinferで毎回分けたほうがいい.計算の無駄"
         if 'loss' in self.output_type:
             target = batch['bind']
-            pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
-            # pos_weight = torch.tensor([1, 1, 1], device=Config.DEVICE)
-            output['bce_loss'] = F.binary_cross_entropy_with_logits(bind.float(), target.float(), pos_weight=pos_weight)
+            output['bce_loss'] = F.binary_cross_entropy_with_logits(bind.float(), target.float())
 
         if 'infer' in self.output_type:
             output['bind'] = torch.sigmoid(bind)
@@ -281,47 +267,24 @@ class Net(nn.Module):
     
 
 
-# In[6]:
-
-
-import torch
-from torch.utils.data import Dataset, DataLoader
-
-class CustomDataset(Dataset):
-    def __init__(self, df, mask_df):
-        self.df = df
-        self.mask_df = mask_df
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        return {
-            'smiles_token_id': torch.tensor(self.df.iloc[idx][FEATURES].values, dtype=torch.uint8),
-            'smiles_token_mask': torch.tensor(self.mask_df.iloc[idx][FEATURES].values, dtype=torch.uint8),
-            'bind': torch.tensor(self.df.iloc[idx][TARGETS].values, dtype=torch.float32)
-        }
 
 class Trainer:
-    def __init__(self, model, optimizer, device, patience, batch_size=4096):
+    def __init__(self, model, optimizer, device, patience):
         self.model = model.to(device)
         self.optimizer = optimizer
         self.device = device
         self.patience = patience
-        self.batch_size = batch_size
 
-    def train_epoch(self, dataset):
+    def train_epoch(self, train_df, mask_df):
         self.model.train()
         running_loss = 0.0
         total_samples = 0
-        # num_workers=0だと遅い
-        train_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, num_workers=32, pin_memory=True)
-        for batch in train_loader:
-            batch = {k: v.to(self.device) for k, v in batch.items()}
+        "TODO: バッチじゃなくてdata loaderを使うべき．データサイズが大きいと遅い"
+        for batch in get_batch(train_df, mask_df, batch_size=4096):
             self.optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=True):
                 output = self.model(batch)
-            loss = output['bce_loss']
+            loss = output['bce_loss']  # モデル内で計算される損失
             loss.backward()
             self.optimizer.step()
             batch_size = batch['smiles_token_id'].size(0)
@@ -331,17 +294,13 @@ class Trainer:
         epoch_loss = running_loss / total_samples
         return epoch_loss
 
-    def validate(self, dataset):
+    def validate(self, valid_df, mask_df):
         self.model.eval()
         val_loss = 0.0
         total_samples = 0
-
-        
-        val_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=32, pin_memory=True)
+        "TODO: バッチじゃなくてdata loaderのほうが効率いいかも"
         with torch.no_grad():
-            for batch in val_loader:
-                # cudaに乗せる
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+            for batch in get_batch(valid_df, mask_df, batch_size=4096):
                 with torch.cuda.amp.autocast(enabled=True):
                     output = self.model(batch)
                 loss = output['bce_loss']
@@ -352,25 +311,31 @@ class Trainer:
         val_loss /= total_samples
         return val_loss
 
-    def train(self, train_datasets, mask_datasets, epochs):
+    def train(self, train_file_list, mask_file_list, epochs):
         best_val_loss = float('inf')
         patience_counter = 0
-        val_df = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
-        val_mask_df = pl.read_parquet(mask_file_list[9], n_rows=n_rows).to_pandas()
-        val_dataset = CustomDataset(val_df, val_mask_df)
+
+        
         for epoch in range(epochs):
             train_df = pl.read_parquet(train_file_list[epoch % 9], n_rows=n_rows).to_pandas()
             mask_df = pl.read_parquet(mask_file_list[epoch % 9], n_rows=n_rows).to_pandas()
-            train_dataset = CustomDataset(train_df, mask_df)
+            
+    
+            epoch_loss = self.train_epoch(train_df, mask_df)
+            del train_df, mask_df
+            gc.collect()
+            val_df = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
+            val_mask_df = pl.read_parquet(mask_file_list[9], n_rows=n_rows).to_pandas()
+            val_loss = self.validate(val_df, val_mask_df)  
+            del val_df, val_mask_df
+            gc.collect()
 
-            epoch_loss = self.train_epoch(train_dataset)
-            val_loss = self.validate(val_dataset)
             print(f'Epoch {epoch + 1}/{epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_loss:.4f}')
 
             if Config.EARLY_STOPPING:
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
+                    torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, f'best_model.pt'))
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -378,29 +343,33 @@ class Trainer:
                         print('早期終了')
                         break
             else:
-                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
+                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, f'best_model.pt'))
                 print("model saved")
+               
 
         return best_val_loss
-    
+
+def get_batch(df, mask_df, batch_size=32):
+    for i in range(0, len(df), batch_size):
+        batch = {
+            'smiles_token_id': torch.from_numpy(df[FEATURES].values[i:i + batch_size]).byte().to(Config.DEVICE),
+            'smiles_token_mask': torch.from_numpy(mask_df[FEATURES].values[i:i + batch_size]).byte().to(Config.DEVICE),
+            'bind': torch.from_numpy(df[TARGETS].values[i:i + batch_size]).float().to(Config.DEVICE)
+        }
+        yield batch
+
 
 def predict_in_batches(model, val_df, val_mask_df, batch_size=4096):
     model.eval()
     preds = []
-    dataset = CustomDataset(val_df, val_mask_df)
-    val_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=32, pin_memory=True)
     with torch.no_grad():
-        for batch in val_loader:
-            batch = {k: v.to(Config.DEVICE) for k, v in batch.items()}
+        for batch in get_batch(val_df, val_mask_df, batch_size=4096):
             with torch.cuda.amp.autocast(enabled=True):
                 output = model(batch)
             output = output["bind"]
             preds.append(output)
     preds = torch.cat(preds, dim=0).cpu().numpy()
     return preds
-
-
-# In[7]:
 
 
 
@@ -424,12 +393,7 @@ EOS = MAX_MOLECULE_ID + 2
 PAD = 0
 MAX_LENGTH = 160
 model = Net().to(Config.DEVICE)
-# model_path = os.path.join(MODEL_DIR, 'flash_tf_small_9.pt')
-# model.load_state_dict(torch.load(model_path))
-# print("model loaded", model_path)
-
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
-# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=5, min_lr=1e-6)
 
 # データの準備
 trainer = Trainer(model, optimizer, Config.DEVICE, Config.PATIENCE)
@@ -454,5 +418,4 @@ preds = predict_in_batches(model, train_df, train_mask_df)
 print(preds)
 train_score = util.get_score(train_df[TARGETS].values, preds)
 print(f'train Score: {train_score:.4f}')
-
 
