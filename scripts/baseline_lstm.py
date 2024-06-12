@@ -28,9 +28,6 @@ from sklearn.metrics import average_precision_score as APS
 import polars as pl
 
 
-# In[45]:
-
-
 import gc
 import os
 import pickle
@@ -55,10 +52,10 @@ import torch.nn.functional as F
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
-    EPOCHS = 9*12
+    EPOCHS = 9
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -69,7 +66,7 @@ class Config:
     
     
 if Config.DEBUG:
-    n_rows = 10**4
+    n_rows = 10**5
 else:
     n_rows = None
 # print config
@@ -105,9 +102,6 @@ train_file_list
 
 
 # # Preprocessing
-
-# In[49]:
-
 
 if Config.PREPROCESS:
     enc = {'l': 1, 'y': 2, '@': 3, '3': 4, 'H': 5, 'S': 6, 'F': 7, 'C': 8, 'r': 9, 's': 10, '/': 11, 'c': 12, 'o': 13,
@@ -180,11 +174,6 @@ def prepare_dataloader(train, val, features, targets, device):
     
     return train_loader, valid_loader, X_val, y_val
     
-
-
-# In[51]:
-
-
 
 
 class Trainer:
@@ -406,15 +395,7 @@ class LSTMModel(nn.Module):
         return x
 
 
-# In[55]:
 
-
-# なぜかスコアが0.027程度．コピーしたノートは0.39くらい．データ数の違い？ロスが下がらない
-# balanced dataを使って．cvが0.2程度．kaggleノートでも0.04程度．どこが原因かわからない
-# BCEwithLogitsLossでロスはまえより下がるようになったが，スコアはあがらない
-#　原因はweight decayが高すぎた．10**-6にした
-"TODO:適合不足の可能性があるので，訓練スコアを見る "
-"TODO: モニター指標としてAPSを使う"
 
 # 定数やモデルの定義は適宜修正してください
 FEATURES = [f'enc{i}' for i in range(142)]
@@ -422,7 +403,8 @@ TARGETS = ['bind1', 'bind2', 'bind3']
 
 
 
-pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
+# pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
+pos_weight = torch.tensor([1, 1, 1], device=Config.DEVICE)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 model = LSTMModel().to(Config.DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
@@ -509,3 +491,31 @@ submission = tst[['id', 'binds']].copy()
 # 'id'と'binds'列をCSVに出力
 submission.to_csv(os.path.join(OUTPUT_DIR,'submission.csv'), index=False)
 
+# 0.001 1e-06 10^5
+# Epoch 1/9, Train Loss: 1.3146, Val Loss: 1.2752
+# Epoch 2/9, Train Loss: 1.2016, Val Loss: 1.1833
+# Epoch 3/9, Train Loss: 1.1453, Val Loss: 1.0837
+# Epoch 4/9, Train Loss: 1.0479, Val Loss: 1.0184
+# Epoch 5/9, Train Loss: 1.0202, Val Loss: 0.9532
+# Epoch 6/9, Train Loss: 0.9219, Val Loss: 0.9037
+# Epoch 7/9, Train Loss: 0.8766, Val Loss: 0.8725
+# Epoch 8/9, Train Loss: 0.8657, Val Loss: 0.8850
+# Epoch 9/9, Train Loss: 0.8081, Val Loss: 0.7546
+# Val score = 0.24203623886337533
+# Train score = 0.25362666948776735
+# local test score = 0.23904620295201295
+
+
+# 9 4096 0.001 1e-06 10 cuda 10^5 no pos weight
+# Epoch 1/9, Train Loss: 0.0901, Val Loss: 0.0391
+# Epoch 2/9, Train Loss: 0.0343, Val Loss: 0.0332
+# Epoch 3/9, Train Loss: 0.0334, Val Loss: 0.0320
+# Epoch 4/9, Train Loss: 0.0317, Val Loss: 0.0305
+# Epoch 5/9, Train Loss: 0.0309, Val Loss: 0.0301
+# Epoch 6/9, Train Loss: 0.0280, Val Loss: 0.0280
+# Epoch 7/9, Train Loss: 0.0273, Val Loss: 0.0267
+# Epoch 8/9, Train Loss: 0.0275, Val Loss: 0.0260
+# Epoch 9/9, Train Loss: 0.0274, Val Loss: 0.0259
+# Val score = 0.2216991756110072
+# Train score = 0.2101091475561024
+# local test score = 0.21136182442175994
