@@ -604,3 +604,39 @@ print(f'train Score: {train_score:.4f}')
 #  [0.004627 0.00518  0.006313]
 #  [0.004627 0.00518  0.00629 ]]
 # train Score: 0.0050
+
+# None lr 1e-3 no pos weight ,wd=0
+# Epoch 1/9, Train Loss: 0.0374, Val Loss: 0.0335
+# model saved
+# Epoch 2/9, Train Loss: 0.0334, Val Loss: 0.0335
+# model saved
+# Epoch 3/9, Train Loss: 0.0334, Val Loss: 0.0336
+# model saved
+# Epoch 4/9, Train Loss: 0.0346, Val Loss: 0.0609
+# model saved
+# Epoch 5/9, Train Loss: 0.0336, Val Loss: 0.0670
+# model saved
+# Epoch 6/9, Train Loss: 0.0335, Val Loss: 0.0790
+# model saved
+# Epoch 7/9, Train Loss: 0.0336, Val Loss: 0.0997
+# model saved
+# Epoch 8/9, Train Loss: 0.0337, Val Loss: 0.0734
+# model saved
+# Epoch 9/9, Train Loss: 0.0340, Val Loss: 0.1310
+# model saved
+# [[0.04147 0.1865  0.1021 ]
+#  [0.04147 0.1864  0.1021 ]
+#  [0.04138 0.1863  0.1021 ]
+#  ...
+#  [0.04138 0.1863  0.1021 ]
+#  [0.04138 0.1865  0.1021 ]
+#  [0.04138 0.1863  0.1021 ]]
+# Val Score: 0.0054
+# [[0.04138 0.1864  0.1021 ]
+#  [0.04138 0.1863  0.1021 ]
+#  [0.04147 0.1863  0.1021 ]
+#  ...
+#  [0.04132 0.1863  0.1019 ]
+#  [0.04138 0.1864  0.1021 ]
+#  [0.04138 0.1865  0.1021 ]]
+# train Score: 0.0054
