@@ -14,7 +14,7 @@ import time
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     
     SEED = 42
     EPOCHS = 10
