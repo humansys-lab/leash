@@ -14,7 +14,7 @@ import time
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
     EPOCHS = 10
@@ -28,7 +28,7 @@ class Config:
     
     
 if Config.DEBUG:
-    n_rows = 3*10**5
+    n_rows = 10**5
 else:
     n_rows = None
     
@@ -114,21 +114,21 @@ def expand_tokens_to_df(tokens, max_length):
 # molecule_smilesのみを取得
 for i in range(10):
     start_time = time.time()
-    input_path = os.path.join("../data/chuncked-raw-dataset/", f"train_{i}.parquet")
-    
-    train_raw = pl.read_parquet(input_path, n_rows=n_rows, columns=["molecule_smiles", "protein_name", "binds"]).to_pandas()
+    input_path = os.path.join("../data/shuffled-dataset/", f"train_{i}.parquet")
+    train_raw = pl.read_parquet(input_path, n_rows=n_rows, columns=["molecule_smiles", "bind1", "bind2", "bind3"]).to_pandas()
     print("data loaded", input_path, train_raw.shape)
-    smiles = train_raw[train_raw['protein_name']=='BRD4']['molecule_smiles']
-    # すべてのSMILESをトークン化
+    smiles = train_raw["molecule_smiles"]
     tokens = smiles.apply(make_token)
     train, mask_df = expand_tokens_to_df(tokens, 160)
-    train['bind1'] = train_raw[train_raw['protein_name']=='BRD4']['binds'].values
-    train['bind2'] = train_raw[train_raw['protein_name']=='HSA']['binds'].values
-    train['bind3'] = train_raw[train_raw['protein_name']=='sEH']['binds'].values
+    train["bind1"] = train_raw["bind1"]
+    train["bind2"] = train_raw["bind2"]
+    train["bind3"] = train_raw["bind3"]
+
     # save
-    train.to_parquet(os.path.join(OUTPUT_DIR, f"train_enc_{i}.parquet"))
+    path = os.path.join(OUTPUT_DIR, f"train_enc_{i}.parquet")
+    train.to_parquet(path)
     mask_df.to_parquet(os.path.join(OUTPUT_DIR, f"train_mask_{i}.parquet"))
-    print("data saved", train.shape, mask_df.shape)
+    print("data saved", path)
     end_time = time.time()
     print("time", int((end_time - start_time)/60), "min")
 
