@@ -1,4 +1,16 @@
+#!/usr/bin/env python
+# coding: utf-8
 
+# In this notebook we will train a deep learning model using all the data available !
+# * preprocessing : I encoded the smiles of all the train & test set and saved it [here](https://www.kaggle.com/datasets/ahmedelfazouan/belka-enc-dataset) , this may take up to 1 hour on TPU.
+# * Training & Inference : I used a simple 1dcnn model trained on 20 epochs.
+# 
+# How to improve :
+# * Try a different architecture : I'm able to get an LB score of 0.604 with minor changes on this architecture.
+# * Try another model like Transformer, or LSTM.
+# * Train for more epochs.
+# * Add more features like a one hot encoding of bb2 or bb3.
+# * And of course ensembling with GBDT models.
 
 
 import gc
@@ -35,8 +47,8 @@ class Config:
     
     SEED = 42
     EPOCHS = 9
-    BATCH_SIZE = 4096
-    LR = 1e-3
+    BATCH_SIZE = 2000
+    LR = 1e-4
     WD = 1e-6*0
     PATIENCE = 10
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -50,10 +62,8 @@ if Config.DEBUG:
 else:
     n_rows = None
     
-print(f"Config: {Config.__dict__}")
-print(n_rows)
 
-# In[3]:
+
 
 
 if Config.KAGGLE_NOTEBOOK:
@@ -70,8 +80,6 @@ else:
 TRAIN_DATA_NAME = "train_enc.parquet"
 
 
-# In[4]:
-
 
 def set_seeds(seed):
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -80,11 +88,12 @@ def set_seeds(seed):
 
 set_seeds(seed=Config.SEED)
 
-train_file_list = [f"../data/chuncked-dataset/local_train_enc_{i}.parquet" for i in range(10)]
-mask_file_list = [f"../data/chuncked-dataset/local_train_mask_{i}.parquet" for i in range(10)]
+
+train_file_list = [f"../data/tf-dataset/train_enc_{i}.parquet" for i in range(10)]
+mask_file_list = [f"../data/tf-dataset/train_mask_{i}.parquet" for i in range(10)]
 
 
-# In[5]:
+print(train_file_list)
 
 
 
@@ -252,12 +261,11 @@ class Net(nn.Module):
 
         # --------------------------
         output = {}
-        "TODO: lossとinferで毎回分けたほうがいい.計算の無駄"
         if 'loss' in self.output_type:
             target = batch['bind']
             # pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
             pos_weight = torch.tensor([1, 1, 1], device=Config.DEVICE)
-            output['bce_loss'] = F.binary_cross_entropy_with_logits(bind.float(), target.float(), pos_weight=pos_weight)
+            output['bce_loss'] = F.binary_cross_entropy_with_logits(bind.float(), target.float())
 
         if 'infer' in self.output_type:
             output['bind'] = torch.sigmoid(bind)
@@ -267,6 +275,7 @@ class Net(nn.Module):
     
 
 
+# In[6]:
 
 
 import torch
@@ -385,12 +394,12 @@ def predict_in_batches(model, val_df, val_mask_df, batch_size=4096):
     return preds
 
 
-# In[7]:
+# In[9]:
 
 
 
 # 定数やモデルの定義は適宜修正してください
-FEATURES = [f'enc{i}' for i in range(142)]
+FEATURES = [f'enc{i}' for i in range(160)]
 TARGETS = ['bind1', 'bind2', 'bind3']
 
 
@@ -409,10 +418,7 @@ EOS = MAX_MOLECULE_ID + 2
 PAD = 0
 MAX_LENGTH = 160
 model = Net().to(Config.DEVICE)
-# model_path = os.path.join(MODEL_DIR, 'flash_tf_small_9.pt')
-# model.load_state_dict(torch.load(model_path))
-# print("model loaded", model_path)
-
+model.output_type = ['loss']
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=5, min_lr=1e-6)
 
@@ -422,7 +428,7 @@ trainer.train(train_file_list, mask_file_list, Config.EPOCHS)
 
 # 最良のモデルをロードして予測を行う
 model.load_state_dict(torch.load(os.path.join(MODEL_DIR, 'best_model.pt')))
-
+model.output_type = ['infer']
 
 val_df = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
 val_mask_df = pl.read_parquet(mask_file_list[9], n_rows=n_rows).to_pandas()
@@ -439,204 +445,3 @@ preds = predict_in_batches(model, train_df, train_mask_df)
 print(preds)
 train_score = util.get_score(train_df[TARGETS].values, preds)
 print(f'train Score: {train_score:.4f}')
-
-
-#　ロスが下がらない
-# None pos weight lr 1e-4
-# Epoch 1/18, Train Loss: 1.4604, Val Loss: 1.3884
-# model saved
-# Epoch 2/18, Train Loss: 1.3848, Val Loss: 1.3861
-# model saved
-# Epoch 3/18, Train Loss: 1.3800, Val Loss: 1.3848
-# model saved
-# Epoch 4/18, Train Loss: 1.3837, Val Loss: 1.3846
-# model saved
-# Epoch 5/18, Train Loss: 1.3870, Val Loss: 1.3849
-# model saved
-# Epoch 6/18, Train Loss: 1.3802, Val Loss: 1.3850
-# model saved
-# Epoch 7/18, Train Loss: 1.3806, Val Loss: 1.3845
-# model saved
-# Epoch 8/18, Train Loss: 1.3827, Val Loss: 1.3848
-# model saved
-# Epoch 9/18, Train Loss: 1.3856, Val Loss: 1.3843
-# model saved
-# Epoch 10/18, Train Loss: 1.3844, Val Loss: 1.3846
-# model saved
-# Epoch 11/18, Train Loss: 1.3834, Val Loss: 1.3850
-# model saved
-# Epoch 12/18, Train Loss: 1.3817, Val Loss: 1.3859
-# model saved
-# Epoch 13/18, Train Loss: 1.3836, Val Loss: 1.3843
-# model saved
-# Epoch 14/18, Train Loss: 1.3873, Val Loss: 1.3851
-# model saved
-# Epoch 15/18, Train Loss: 1.3804, Val Loss: 1.3845
-# model saved
-# Epoch 16/18, Train Loss: 1.3808, Val Loss: 1.3844
-# model saved
-# Epoch 17/18, Train Loss: 1.3829, Val Loss: 1.3849
-# model saved
-# Epoch 18/18, Train Loss: 1.3855, Val Loss: 1.3861
-# model saved
-# [[0.529  0.519  0.485 ]
-#  [0.529  0.5186 0.485 ]
-#  [0.529  0.5186 0.485 ]
-#  ...
-#  [0.529  0.519  0.4849]
-#  [0.529  0.5186 0.485 ]
-#  [0.529  0.5186 0.485 ]]
-# Val Score: 0.0056
-# [[0.529  0.5186 0.485 ]
-#  [0.529  0.5186 0.4849]
-#  [0.529  0.519  0.4849]
-#  ...
-#  [0.529  0.519  0.4849]
-#  [0.529  0.5186 0.485 ]
-#  [0.529  0.519  0.4849]]
-# train Score: 0.0056
-
-# 10^5 no pos weight lr 1e-4
-# Epoch 1/9, Train Loss: 0.2863, Val Loss: 0.3075
-# model saved
-# Epoch 2/9, Train Loss: 0.1964, Val Loss: 0.1273
-# model saved
-# Epoch 3/9, Train Loss: 0.1371, Val Loss: 0.1257
-# model saved
-# Epoch 4/9, Train Loss: 0.1330, Val Loss: 0.1173
-# model saved
-# Epoch 5/9, Train Loss: 0.1211, Val Loss: 0.1053
-# model saved
-# Epoch 6/9, Train Loss: 0.1084, Val Loss: 0.1007
-# model saved
-# Epoch 7/9, Train Loss: 0.1187, Val Loss: 0.1124
-# model saved
-# Epoch 8/9, Train Loss: 0.1204, Val Loss: 0.1141
-# model saved
-# Epoch 9/9, Train Loss: 0.1401, Val Loss: 0.1298
-# model saved
-# [[0.05292 0.1255  0.156  ]
-#  [0.05225 0.1255  0.1547 ]
-#  [0.05225 0.1262  0.1584 ]
-#  ...
-#  [0.05212 0.12335 0.1587 ]
-#  [0.05225 0.1241  0.1567 ]
-#  [0.05243 0.126   0.1539 ]]
-# Val Score: 0.0084
-# [[0.05252 0.12463 0.1564 ]
-#  [0.05225 0.126   0.1554 ]
-#  [0.05243 0.1251  0.1549 ]
-#  ...
-#  [0.05203 0.1259  0.1554 ]
-#  [0.05194 0.1262  0.1547 ]
-#  [0.05243 0.1243  0.1556 ]]
-# train Score: 0.0091
-
-
-# 10^5 lr 1e-3 
-# Epoch 1/9, Train Loss: 0.1824, Val Loss: 0.0371
-# model saved
-# Epoch 2/9, Train Loss: 0.0501, Val Loss: 0.0521
-# model saved
-# Epoch 3/9, Train Loss: 0.0491, Val Loss: 0.0471
-# model saved
-# Epoch 4/9, Train Loss: 0.0435, Val Loss: 0.0416
-# model saved
-# Epoch 5/9, Train Loss: 0.0394, Val Loss: 0.0364
-# model saved
-# Epoch 6/9, Train Loss: 0.0332, Val Loss: 0.0337
-# model saved
-# Epoch 7/9, Train Loss: 0.0334, Val Loss: 0.0335
-# model saved
-# Epoch 8/9, Train Loss: 0.0341, Val Loss: 0.0333
-# model saved
-# Epoch 9/9, Train Loss: 0.0347, Val Loss: 0.0333
-# model saved
-# [[0.004486 0.003664 0.007065]
-#  [0.004486 0.003664 0.00704 ]
-#  [0.004486 0.00368  0.007065]
-#  ...
-#  [0.004486 0.003664 0.007065]
-#  [0.004486 0.003664 0.007065]
-#  [0.004486 0.003664 0.007065]]
-# Val Score: 0.0066
-# [[0.004486 0.003664 0.007065]
-#  [0.004486 0.003664 0.00704 ]
-#  [0.004486 0.003664 0.007065]
-#  ...
-#  [0.004486 0.003664 0.00704 ]
-#  [0.004486 0.003664 0.00704 ]
-#  [0.004486 0.003664 0.007065]]
-# train Score: 0.0064
-
-
-# 10^5 lr 1e-3 no pos weight ,wd=0
-# Epoch 1/9, Train Loss: 0.1790, Val Loss: 0.1100
-# model saved
-# Epoch 2/9, Train Loss: 0.5528, Val Loss: 0.0338
-# model saved
-# Epoch 3/9, Train Loss: 0.0346, Val Loss: 0.0338
-# model saved
-# Epoch 4/9, Train Loss: 0.0884, Val Loss: 0.0803
-# model saved
-# Epoch 5/9, Train Loss: 0.1438, Val Loss: 0.0381
-# model saved
-# Epoch 6/9, Train Loss: 0.0343, Val Loss: 0.0337
-# model saved
-# Epoch 7/9, Train Loss: 0.0347, Val Loss: 0.0343
-# model saved
-# Epoch 8/9, Train Loss: 0.0347, Val Loss: 0.0335
-# model saved
-# Epoch 9/9, Train Loss: 0.0349, Val Loss: 0.0334
-# [[0.004627 0.00518  0.00629 ]
-#  [0.004627 0.00518  0.006313]
-#  [0.004627 0.00518  0.006313]
-#  ...
-#  [0.004627 0.00518  0.00629 ]
-#  [0.004627 0.00518  0.00629 ]
-#  [0.004627 0.00518  0.00629 ]]
-# Val Score: 0.0051
-# [[0.004627 0.00518  0.00629 ]
-#  [0.004627 0.00518  0.006313]
-#  [0.004627 0.00518  0.006313]
-#  ...
-#  [0.004627 0.00518  0.00629 ]
-#  [0.004627 0.00518  0.006313]
-#  [0.004627 0.00518  0.00629 ]]
-# train Score: 0.0050
-
-# None lr 1e-3 no pos weight ,wd=0
-# Epoch 1/9, Train Loss: 0.0374, Val Loss: 0.0335
-# model saved
-# Epoch 2/9, Train Loss: 0.0334, Val Loss: 0.0335
-# model saved
-# Epoch 3/9, Train Loss: 0.0334, Val Loss: 0.0336
-# model saved
-# Epoch 4/9, Train Loss: 0.0346, Val Loss: 0.0609
-# model saved
-# Epoch 5/9, Train Loss: 0.0336, Val Loss: 0.0670
-# model saved
-# Epoch 6/9, Train Loss: 0.0335, Val Loss: 0.0790
-# model saved
-# Epoch 7/9, Train Loss: 0.0336, Val Loss: 0.0997
-# model saved
-# Epoch 8/9, Train Loss: 0.0337, Val Loss: 0.0734
-# model saved
-# Epoch 9/9, Train Loss: 0.0340, Val Loss: 0.1310
-# model saved
-# [[0.04147 0.1865  0.1021 ]
-#  [0.04147 0.1864  0.1021 ]
-#  [0.04138 0.1863  0.1021 ]
-#  ...
-#  [0.04138 0.1863  0.1021 ]
-#  [0.04138 0.1865  0.1021 ]
-#  [0.04138 0.1863  0.1021 ]]
-# Val Score: 0.0054
-# [[0.04138 0.1864  0.1021 ]
-#  [0.04138 0.1863  0.1021 ]
-#  [0.04147 0.1863  0.1021 ]
-#  ...
-#  [0.04132 0.1863  0.1019 ]
-#  [0.04138 0.1864  0.1021 ]
-#  [0.04138 0.1865  0.1021 ]]
-# train Score: 0.0054
