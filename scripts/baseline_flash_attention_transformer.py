@@ -34,9 +34,11 @@ import math
 
 from module import network, dataset, util
 from importlib import reload
-
+import torch
+from torch.utils.data import Dataset, DataLoader
 
 from functools import partial
+import time
 
 
 
@@ -63,7 +65,8 @@ else:
     n_rows = None
     
 
-
+print(f"Config: {Config.__dict__}")
+print(n_rows)
 
 
 if Config.KAGGLE_NOTEBOOK:
@@ -278,8 +281,6 @@ class Net(nn.Module):
 # In[6]:
 
 
-import torch
-from torch.utils.data import Dataset, DataLoader
 
 class CustomDataset(Dataset):
     def __init__(self, df, mask_df):
@@ -352,7 +353,10 @@ class Trainer:
         val_df = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
         val_mask_df = pl.read_parquet(mask_file_list[9], n_rows=n_rows).to_pandas()
         val_dataset = CustomDataset(val_df, val_mask_df)
+        
+        
         for epoch in range(epochs):
+            start = time.time()
             train_df = pl.read_parquet(train_file_list[epoch % 9], n_rows=n_rows).to_pandas()
             mask_df = pl.read_parquet(mask_file_list[epoch % 9], n_rows=n_rows).to_pandas()
             train_dataset = CustomDataset(train_df, mask_df)
@@ -360,7 +364,9 @@ class Trainer:
             epoch_loss = self.train_epoch(train_dataset)
             val_loss = self.validate(val_dataset)
             print(f'Epoch {epoch + 1}/{epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_loss:.4f}')
-
+            
+            end = time.time()
+            print(f"training time: {int((end-start)/60)} mins")
             if Config.EARLY_STOPPING:
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -445,3 +451,33 @@ preds = predict_in_batches(model, train_df, train_mask_df)
 print(preds)
 train_score = util.get_score(train_df[TARGETS].values, preds)
 print(f'train Score: {train_score:.4f}')
+
+
+# lr 1e-4, wd 0, batch size 2000 None
+# Epoch 1/9, Train Loss: 0.0573, Val Loss: 0.0354
+# Epoch 2/9, Train Loss: 0.0805, Val Loss: 0.1343
+# Epoch 3/9, Train Loss: 0.1129, Val Loss: 0.2111
+# Epoch 4/9, Train Loss: 0.0600, Val Loss: 0.0410
+# Epoch 5/9, Train Loss: 0.0335, Val Loss: 0.0387
+# Epoch 6/9, Train Loss: 0.0334, Val Loss: 0.0387
+# Epoch 7/9, Train Loss: 0.0333, Val Loss: 0.0382
+# Epoch 8/9, Train Loss: 0.0333, Val Loss: 0.0382
+# Epoch 9/9, Train Loss: 0.0334, Val Loss: 0.0385
+
+
+# [[0.01543 0.01253 0.02124]
+#  [0.01549 0.01257 0.02129]
+#  [0.01549 0.01257 0.02129]
+#  ...
+#  [0.01543 0.01253 0.02121]
+#  [0.01543 0.01253 0.02121]
+#  [0.01543 0.01253 0.02129]]
+# Val Score: 0.0059
+# [[0.01549 0.01263 0.02133]
+#  [0.01543 0.01257 0.02124]
+#  [0.01543 0.01253 0.02124]
+#  ...
+#  [0.01543 0.01253 0.02121]
+#  [0.01543 0.01257 0.02124]
+#  [0.01549 0.01257 0.02124]]
+# train Score: 0.0059
