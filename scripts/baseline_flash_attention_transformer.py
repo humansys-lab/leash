@@ -45,12 +45,12 @@ import time
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
-    EPOCHS = 9
+    EPOCHS = 1
     BATCH_SIZE = 2000
-    LR = 1e-4
+    LR = 1e-1
     WD = 1e-6*0
     PATIENCE = 10
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
