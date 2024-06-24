@@ -12,8 +12,6 @@
 # * Add more features like a one hot encoding of bb2 or bb3.
 # * And of course ensembling with GBDT models.
 
-# In[1]:
-
 
 import gc
 import os
@@ -36,16 +34,16 @@ import math
 
 from module import network, dataset, util
 from importlib import reload
-
+import time
 
 
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     
     SEED = 42
-    EPOCHS = 9*10
+    EPOCHS = 1
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -53,7 +51,7 @@ class Config:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     NBR_FOLDS = 15
     SELECTED_FOLDS = [0]
-    
+    EARLY_STOPPING = False
     
 if Config.DEBUG:
     n_rows = 10**4
@@ -61,8 +59,8 @@ else:
     n_rows = None
     
 
-
-# In[3]:
+print(f"Config: {Config.__dict__}")
+print(n_rows)
 
 
 if Config.KAGGLE_NOTEBOOK:
@@ -90,23 +88,6 @@ def set_seeds(seed):
 set_seeds(seed=Config.SEED)
 
 train_file_list = [f"../data/chuncked-dataset/local_train_enc_{i}.parquet" for i in range(10)]
-train_file_list
-
-
-# # Preprocessing
-
-# In[5]:
-
-
-
-# train = pl.read_parquet(os.path.join(PROCESSED_DIR, TRAIN_DATA_NAME), n_rows=n_rows)
-test = pl.read_parquet(os.path.join(PROCESSED_DIR, 'test_enc.parquet'), n_rows=n_rows)
-# train = train.to_pandas()
-test = test.to_pandas()
-
-
-# In[6]:
-
 
 
     
@@ -139,11 +120,7 @@ def prepare_dataloader(train, val, features, targets, device):
 
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
-    
     return train_loader, valid_loader, X_val, y_val
-
-
-# In[7]:
 
 
 
@@ -190,6 +167,7 @@ class Trainer:
         val = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
         # print("loaded val data", val.shape, train_file_list[9])
         for epoch in range(epochs):
+            start_time = time.time()
             train = pl.read_parquet(train_file_list[epoch % 9], n_rows=n_rows).to_pandas()
             # print("loaded train data", train.shape, train_file_list[epoch % 9])
             
@@ -200,16 +178,22 @@ class Trainer:
             # APSも計算
             print(f'Epoch {epoch+1}/{epochs}, Train Loss: {epoch_loss:.4f},  Val Loss: {val_loss:.4f} ')
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
-                patience_counter = 0
+            if Config.EARLY_STOPPING:
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= self.patience:
+                        print('Early stopping')
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= self.patience:
-                    print('Early stopping')
-                    break
-
+                torch.save(self.model.state_dict(), os.path.join(MODEL_DIR, 'best_model.pt'))
+                print("model saved")
+            end_time = time.time()
+            print(f"Time taken for epoch {epoch+1} = {(end_time - start_time)//60} mins")
+             
         return best_val_loss
 
     # 1行ずつ予測(メモリ節約)
@@ -251,6 +235,7 @@ TARGETS = ['bind1', 'bind2', 'bind3']
 
 pos_weight = torch.tensor([215, 241, 136], device=Config.DEVICE)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
 model = network.ImprovedCNNModel().to(Config.DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
 
@@ -260,7 +245,6 @@ all_preds = []
 
 
 # データの準備
-train = pl.read_parquet(train_file_list[0], n_rows=n_rows).to_pandas()
 trainer = Trainer(model, criterion, optimizer, Config.DEVICE, Config.PATIENCE)
 trainer.train(train_file_list, Config.EPOCHS)
 
@@ -272,27 +256,15 @@ _, _, X_val, y_val =prepare_dataloader(val, val, FEATURES, TARGETS, Config.DEVIC
 oof = predict_in_batches(model, X_val, Config.BATCH_SIZE)
 print("Val score = ", util.get_score(y_val.cpu().numpy(), oof.detach().cpu().numpy()))
 
-test_tensor = torch.tensor(test.values, dtype=torch.float32).to(Config.DEVICE)
-preds = predict_in_batches(model, test_tensor, Config.BATCH_SIZE)
-all_preds.append(preds)
-
-
-# CVのアンサンブル
-preds = np.mean(all_preds, axis=0)
-
-
-# In[ ]:
-
 
 # trainのスコア
-train = pl.read_parquet(train_file_list[0], n_rows=n_rows).to_pandas()
+train = pl.read_parquet(train_file_list[0], n_rows=10**5).to_pandas()
 targets = train[TARGETS].values
 train_tensor = torch.tensor(train[FEATURES].values, dtype=torch.float32).to(Config.DEVICE)
 train_preds = predict_in_batches(model, train_tensor, Config.BATCH_SIZE)
 print("Train score = ", util.get_score(targets, train_preds.detach().cpu().numpy()))
 
 
-# In[ ]:
 
 
 # local testの予測と結果
@@ -305,35 +277,6 @@ local_preds = predict_in_batches(model, local_test_tensor, Config.BATCH_SIZE)
 
 print("Local test score = ", util.get_score(target, local_preds.detach().cpu().numpy()))
 
-
-
-# # Submission
-
-# In[ ]:
-
-
-
-# テストデータの読み込み
-tst = pl.read_parquet(os.path.join(RAW_DIR, "test.parquet"), n_rows=None).to_pandas()
-
-# 'binds'列を追加して初期化
-tst['binds'] = 0
-
-# ブールマスクの作成
-mask_BRD4 = (tst['protein_name'] == 'BRD4').values
-mask_HSA = (tst['protein_name'] == 'HSA').values
-mask_sEH = (tst['protein_name'] == 'sEH').values
-
-# 各マスクに対応する予測値を代入
-tst.loc[mask_BRD4, 'binds'] = preds[mask_BRD4][:, 0]
-tst.loc[mask_HSA, 'binds'] = preds[mask_HSA][:, 1]
-tst.loc[mask_sEH, 'binds'] = preds[mask_sEH][:, 2]
-
-
-
-submission = tst[['id', 'binds']].copy()
-# 'id'と'binds'列をCSVに出力
-submission.to_csv(os.path.join(OUTPUT_DIR,'submission.csv'), index=False)
 
 
 
