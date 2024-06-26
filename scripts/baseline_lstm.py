@@ -29,10 +29,10 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9 * 5
+    EPOCHS = 9
     BATCH_SIZE = 4096
     LR = 1e-3
     WD = 1e-6
@@ -207,7 +207,7 @@ def predict_in_batches(model, data, batch_size):
 FEATURES = [f'enc{i}' for i in range(142)]
 TARGETS = ['bind1', 'bind2', 'bind3']
 
-def main():
+def train_model():
     print(f"Config: {Config.__dict__}")
     print(n_rows)
     
@@ -215,8 +215,8 @@ def main():
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-    for val_index in Config.VAL_INDEX:
-        print(f"Cross Validation: {val_index+1}/{len(Config.VAL_INDEX)}")
+    for i, val_index in enumerate(Config.VAL_INDEX):
+        print(f"Cross Validation: {i+1}/{len(Config.VAL_INDEX)}")
         train_index = [index for index in range(10) if index not in [val_index]]
         train_index.append(val_index)
         train_file_list = [f"../data/chuncked-dataset/local_train_enc_{i}.parquet" for i in train_index]
@@ -260,24 +260,28 @@ def main():
 
 
 
-if __name__ == '__main__':
+def main():
     tz_japan = pytz.timezone('Asia/Tokyo')
-
+    
     # 現在の日本時間を取得してログファイル名を生成
-    current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H:%M:%S")
+    current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H_%M_%S")
     log_filename = f"../data/logs/lstm_{current_time}.log"
     
-    # ログファイルに出力をリダイレクト
-    with open(log_filename, "w") as file:
-        # 以前のstdoutを保存
+    # バッファリングなしでログファイルに出力をリダイレクト
+    with open(log_filename, "w", buffering=1) as file:
         old_stdout = sys.stdout
         sys.stdout = file
         
         # 出力したい内容（例）
-        main()
+        train_model()
+        
         # stdoutを元に戻す
         sys.stdout = old_stdout
     
+
+if __name__ == '__main__':
+    main()
+
 
 
 
