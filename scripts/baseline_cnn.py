@@ -25,7 +25,7 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     MODEL = 'CNN'
     SEED = 42
     EPOCHS = 1
@@ -35,7 +35,7 @@ class Config:
     PATIENCE = 10
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     EARLY_STOPPING = False
-    NUM_CV = 2
+    NUM_CV = 10
     
     
 if Config.DEBUG:
