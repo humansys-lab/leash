@@ -25,21 +25,21 @@ import pytz
 from module import network, dataset, util
 from importlib import reload
 
-# %%
+
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9
+    EPOCHS = 9*2
     BATCH_SIZE = 4096
-    LR = 1e-3
+    LR = 1e-4
     WD = 1e-6
-    PATIENCE = 10
+    PATIENCE = 5
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     EARLY_STOPPING = False
-    VAL_INDEX = [1]
+    VAL_INDEX = [0]
     
     
 if Config.DEBUG:
@@ -223,8 +223,12 @@ def train_model():
 
 
         model = network.LSTMModel().to(Config.DEVICE)
+        model_path = os.path.join(MODEL_DIR, "lstm/lstm_fold0_36.pt")
+        model.load_state_dict(torch.load(model_path))
+        print(f"model loaded {model_path}")
+        
         optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=1, min_lr=1e-6)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=1e-6)
         trainer = Trainer(model, criterion, optimizer, Config.DEVICE, Config.PATIENCE, scheduler)
         trainer.train(train_file_list, Config.EPOCHS)
 
@@ -264,15 +268,14 @@ def main():
     tz_japan = pytz.timezone('Asia/Tokyo')
     
     # 現在の日本時間を取得してログファイル名を生成
-    current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H_%M_%S")
+    current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H:%M:%S")
     log_filename = f"../data/logs/lstm_{current_time}.log"
     
-    # バッファリングなしでログファイルに出力をリダイレクト
+    # 逐一出力
     with open(log_filename, "w", buffering=1) as file:
         old_stdout = sys.stdout
         sys.stdout = file
         
-        # 出力したい内容（例）
         train_model()
         
         # stdoutを元に戻す
