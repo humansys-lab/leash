@@ -29,7 +29,7 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     MODEL = 'lstm'
     SEED = 42
     EPOCHS = 9*2
