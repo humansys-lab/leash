@@ -21,32 +21,39 @@ import time
 import sys
 import datetime
 import pytz
+import matplotlib.pyplot as plt
+
 
 from module import network, dataset, util
 from importlib import reload
 
-
+# %%
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9*2
+    EPOCHS = 9
     BATCH_SIZE = 4096
-    LR = 1e-4
+    LR = 1e-3
     WD = 1e-6
-    PATIENCE = 5
+    PATIENCE = 3
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     EARLY_STOPPING = False
-    VAL_INDEX = [0]
+    NUM_CV = 1
+    VAL_INDEX = [1]
+    NOTEBOOK = False
+    LOAD_MODEL = False
+    # models配下
+    MODEL_PATH = "lstm/lstm_fold0_54.pt"
     
     
 if Config.DEBUG:
     n_rows = 10**4
 else:
     n_rows = None
-    
+
 
 
 # %%
@@ -60,8 +67,16 @@ else:
     PROCESSED_DIR = "../data/processed/"
     OUTPUT_DIR = "../data/result/"
     MODEL_DIR = "../models/"
+    LOG_DIR = "../data/logs"
+    LOSS_DIR = "../data/losses"
 
 TRAIN_DATA_NAME = "train_enc.parquet"
+
+# %%
+tz_japan = pytz.timezone('Asia/Tokyo')
+# 現在の日本時間を取得してログファイル名を生成
+current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H:%M:%S")
+log_filename = os.path.join(LOG_DIR, f"{Config.MODEL}_{current_time}")
 
 # %%
 def set_seeds(seed):
@@ -72,6 +87,7 @@ def set_seeds(seed):
 set_seeds(seed=Config.SEED)
 
 
+    
 def prepare_data(train, train_idx, valid_idx, features, targets, device):
     """
     データの準備を行う関数
@@ -115,11 +131,13 @@ class Trainer:
         self.device = device
         self.patience = patience
         self.scheduler = scheduler
+        self.loss = {"train": [], "val": []}
+        self.score = {"train": [], "val": []}
 
     def train_epoch(self, train_loader):
         self.model.train()
         running_loss = 0.0
-
+        score_list = []
         for inputs, targets in train_loader:
             self.optimizer.zero_grad()
             outputs = self.model(inputs)
@@ -127,25 +145,35 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
             running_loss += loss.item() * inputs.size(0)
+            
+            # caluculate the score(almost APS)
+            score_list.append(util.get_score(targets.detach().cpu().numpy(), outputs.detach().cpu().numpy()))
+
 
         epoch_loss = running_loss / len(train_loader.dataset)
-        return epoch_loss
+        
+        self.loss["train"].append(epoch_loss)
+        self.score["train"].append(np.mean(score_list))
 
     def validate(self, valid_loader):
         self.model.eval()
         val_loss = 0.0
+        score_list = []
         with torch.no_grad():
             for inputs, targets in valid_loader:
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, targets)
                 val_loss += loss.item() * inputs.size(0)
+                
+                score_list.append(util.get_score(targets.detach().cpu().numpy(), outputs.detach().cpu().numpy()))
 
         val_loss /= len(valid_loader.dataset)
+        self.loss["val"].append(val_loss)
+        self.score["val"].append(np.mean(score_list))
         # scheduler
         self.scheduler.step(val_loss)
         
-        return val_loss
-
+    
     def train(self, train_file_list, epochs):
         best_val_loss = float('inf')
         patience_counter = 0
@@ -157,13 +185,13 @@ class Trainer:
             train = pl.read_parquet(train_file_list[epoch % 9], n_rows=n_rows).to_pandas()
             # print("loaded train data", train.shape, train_file_list[epoch % 9])
             train_loader, valid_loader, X_val, y_val = prepare_dataloader(train, val, FEATURES, TARGETS, Config.DEVICE)
-            epoch_loss = self.train_epoch(train_loader)
-            val_loss = self.validate(valid_loader)
-            # APSも計算
-            current_lr = self.optimizer.param_groups[0]['lr']
-    
-            print(f"Epoch {epoch+1}/{Config.EPOCHS} - Train Loss: {epoch_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.1e}")
-    
+            
+            self.train_epoch(train_loader)
+            self.validate(valid_loader)
+
+            current_lr = self.optimizer.param_groups[0]['lr']    
+            print(f"Epoch {epoch+1}/{Config.EPOCHS} - Train Loss: {self.loss['train'][-1]:.4f}, Train Score: {self.score['train'][-1]:.4f} ,Val Loss: {self.loss['val'][-1]:.4f}, Val Score: {self.score['val'][-1]:.4f}, LR: {current_lr:.1e}")
+
             
             if Config.EARLY_STOPPING:
                 if val_loss < best_val_loss:
@@ -204,8 +232,11 @@ def predict_in_batches(model, data, batch_size):
     return torch.cat(preds, dim=0)
 
 # %%
+
+
 FEATURES = [f'enc{i}' for i in range(142)]
 TARGETS = ['bind1', 'bind2', 'bind3']
+
 
 def train_model():
     print(f"Config: {Config.__dict__}")
@@ -223,14 +254,22 @@ def train_model():
 
 
         model = network.LSTMModel().to(Config.DEVICE)
-        model_path = os.path.join(MODEL_DIR, "lstm/lstm_fold0_36.pt")
-        model.load_state_dict(torch.load(model_path))
-        print(f"model loaded {model_path}")
+        if Config.LOAD_MODEL:
+            model_path = os.path.join(MODEL_DIR, Config.MODEL_PATH)
+            model.load_state_dict(torch.load(model_path))
+            print(f"model loaded {model_path}")
+        else :
+            print("model initialized")
         
         optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=1e-6)
         trainer = Trainer(model, criterion, optimizer, Config.DEVICE, Config.PATIENCE, scheduler)
         trainer.train(train_file_list, Config.EPOCHS)
+        
+        # ロスの保存
+        loss_path = os.path.join(LOSS_DIR, f'{Config.MODEL}_fold{val_index}_loss.npy')
+        np.save(loss_path, trainer.loss)
+        print("loss saved", loss_path)
 
         # 最良のモデルをロードして予測を行う
         model.load_state_dict(torch.load(os.path.join(MODEL_DIR, 'best_model.pt')))
@@ -238,7 +277,7 @@ def train_model():
         val = pl.read_parquet(train_file_list[9], n_rows=n_rows).to_pandas()
         _, _, X_val, y_val =prepare_dataloader(val, val, FEATURES, TARGETS, Config.DEVICE)
         oof = predict_in_batches(model, X_val, Config.BATCH_SIZE)
-        print("Val score = ", util.get_score(y_val.cpu().numpy(), oof.detach().cpu().numpy()))
+        print(f"Val score = {util.get_score(y_val.cpu().numpy(), oof.detach().cpu().numpy()):4f}")
 
             
         # train score
@@ -246,7 +285,7 @@ def train_model():
         targets = train[TARGETS].values
         train_tensor = torch.tensor(train[FEATURES].values, dtype=torch.float32).to(Config.DEVICE)
         train_preds = predict_in_batches(model, train_tensor, Config.BATCH_SIZE)
-        print("Train score = ", util.get_score(targets, train_preds.detach().cpu().numpy()))
+        print(f"Train score = {util.get_score(targets, train_preds.detach().cpu().numpy()):.4f}")
 
 
         # local testの予測と結果
@@ -257,22 +296,19 @@ def train_model():
         local_test_tensor = torch.tensor(local_test[FEATURES].values, dtype=torch.float32).to(Config.DEVICE)
         local_preds = predict_in_batches(model, local_test_tensor, Config.BATCH_SIZE)
 
-        print("Local test score = ", util.get_score(target, local_preds.detach().cpu().numpy()))
+        print(f"Local test score = {util.get_score(target, local_preds.detach().cpu().numpy()):.4f}")
         model_path = os.path.join(MODEL_DIR, f'{Config.MODEL}_fold{val_index}.pt')
         torch.save(model.state_dict(), model_path)
         print(f"model saved {model_path}")
 
 
 
+# %%
+
 def main():
-    tz_japan = pytz.timezone('Asia/Tokyo')
-    
-    # 現在の日本時間を取得してログファイル名を生成
-    current_time = datetime.datetime.now(tz_japan).strftime("%Y_%m_%d_%H:%M:%S")
-    log_filename = f"../data/logs/lstm_{current_time}.log"
-    
+
     # 逐一出力
-    with open(log_filename, "w", buffering=1) as file:
+    with open(log_filename+".log", "w", buffering=1) as file:
         old_stdout = sys.stdout
         sys.stdout = file
         
@@ -281,10 +317,16 @@ def main():
         # stdoutを元に戻す
         sys.stdout = old_stdout
     
+    
 
-if __name__ == '__main__':
-    main()
+if Config.NOTEBOOK:
+    train_model()
+    
+else:
+    if __name__ == "__main__":
+        main()
 
+# %%
 
 
 
