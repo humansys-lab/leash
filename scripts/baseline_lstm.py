@@ -34,9 +34,9 @@ class Config:
     DEBUG = False
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9
+    EPOCHS = 9*3
     BATCH_SIZE = 4096
-    LR = 1e-3
+    LR = 1e-4
     WD = 1e-6
     PATIENCE = 3
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -44,9 +44,9 @@ class Config:
     NUM_CV = 1
     VAL_INDEX = [1]
     NOTEBOOK = False
-    LOAD_MODEL = False
+    LOAD_MODEL = True
     # models配下
-    MODEL_PATH = "lstm/lstm_fold0_54.pt"
+    MODEL_PATH = "lstm/lstm_fold1_27.pt"
     
     
 if Config.DEBUG:
@@ -254,6 +254,10 @@ def train_model():
 
 
         model = network.LSTMModel().to(Config.DEVICE)
+        optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=1e-6)
+        
+        model = torch.compile(model)
         if Config.LOAD_MODEL:
             model_path = os.path.join(MODEL_DIR, Config.MODEL_PATH)
             model.load_state_dict(torch.load(model_path))
@@ -261,8 +265,8 @@ def train_model():
         else :
             print("model initialized")
         
-        optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=1e-6)
+        
+        
         trainer = Trainer(model, criterion, optimizer, Config.DEVICE, Config.PATIENCE, scheduler)
         trainer.train(train_file_list, Config.EPOCHS)
         
