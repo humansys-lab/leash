@@ -31,22 +31,23 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = False
+    DEBUG = True
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9*3
+    EPOCHS = 9*6
     BATCH_SIZE = 4096
-    LR = 1e-4
+    LR = 1e-3
+    MIN_LR = 1e-7
     WD = 1e-6
     PATIENCE = 3
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     EARLY_STOPPING = False
     NUM_CV = 1
-    VAL_INDEX = [1]
+    VAL_INDEX = [7]
     NOTEBOOK = False
-    LOAD_MODEL = True
+    LOAD_MODEL = False
     # models配下
-    MODEL_PATH = "lstm/lstm_fold1_27.pt"
+    MODEL_PATH = "lstm/lstm_fold4_18.pt"
     
     
 if Config.DEBUG:
@@ -255,7 +256,7 @@ def train_model():
 
         model = network.LSTMModel().to(Config.DEVICE)
         optimizer = optim.Adam(model.parameters(), lr=Config.LR, weight_decay=Config.WD)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=1e-6)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=Config.PATIENCE, min_lr=Config.MIN_LR)
         
         model = torch.compile(model)
         if Config.LOAD_MODEL:
