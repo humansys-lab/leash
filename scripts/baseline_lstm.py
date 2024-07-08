@@ -31,23 +31,23 @@ from importlib import reload
 class Config:
     PREPROCESS = False
     KAGGLE_NOTEBOOK = False
-    DEBUG = True
+    DEBUG = False
     MODEL = 'lstm'
     SEED = 42
-    EPOCHS = 9*6
+    EPOCHS = 9*2
     BATCH_SIZE = 4096
-    LR = 1e-3
+    LR = 1e-5
     MIN_LR = 1e-7
     WD = 1e-6
     PATIENCE = 3
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     EARLY_STOPPING = False
     NUM_CV = 1
-    VAL_INDEX = [7]
+    VAL_INDEX = [4]
     NOTEBOOK = False
-    LOAD_MODEL = False
+    LOAD_MODEL = True
     # models配下
-    MODEL_PATH = "lstm/lstm_fold4_18.pt"
+    MODEL_PATH = "lstm/lstm_fold4_45.pt"
     
     
 if Config.DEBUG:
