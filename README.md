@@ -3,28 +3,38 @@
 Leash Bio - Predict New Medicines with BELKAの研究室リポです．
 https://www.kaggle.com/competitions/leash-BELKA
 
-コードは```scripts```にある．
-環境はkaggle notebookと同じ環境．
-dockerコンテナを使用する．
+最終成績：86/1946で銀メダル．
 
-## kaggleコンテナ入り方
-1. H100(PC3)に接続
-2. kaggleのコンテナにアタッチ
-```bash
-docker attach kaggle
-```
+## 概要
+- タンパク質の結合性を予測するコンペ．
+- タンパク質の構造式が[SMILES https://future-chem.com/smiles-smarts/]形式で与えられる．そのタンパク質が，３種類のターゲットのタンパク質に結合するかどうかの確率を予測することが目的．各ターゲットタンパク質に対する結合性の二値分類．
 
-## 実行手順
-1. ```scripts/dataset.ipynb```を実行し，チャンクデータセットを取得．もともとのデータが大きくメモリ効率が悪いため，チャンクに分けてモデル構築するのが目的．
+結果
+- シェイクがかなり激しいコンペだった．金メダル勢はだいたいpublicの順位から1000位程度あがっていた．privateスコアの計算に使われるデータには，訓練データに含まれていない未知のタンパク質が使われている．そのため，与えられたデータに適合させるというよりも，どんなタンパク質にも対応できる汎化性能が大切だったのだと思う．実際，上位勢のソリューションは，CV戦略を工夫し，未知のタンパク質に対する汎化性能を評価できるようにしていた．
+- シェイクが大きかった理由としては，未知のタンパク質がprivateデータに含まれていたことだと考えている．単純で，少し適合不足気味の予測は，publicスコアは低いものの，privateスコアで逆に性能が良くなる．これにより，大逆転がおきたのだと考えている．また，そもそもタンパク質のコンペは一般的にシェイクが起きやすいというのもあるらしい．
+- 自身もシェイクの影響を受け，100位以上順位があがり，棚ぼたで銀メダルが取れてしまった．実際，kernelの[CNN baseline](https://www.kaggle.com/code/ahmedelfazouan/belka-1dcnn-starter-with-all-data/notebook)の予測をそのまま提出するだけでメダルをとっている人もいて，なかなか波乱のコンペであった．
 
+## 自分のソリューション
+- SMILES形式のデータをルールベースでエンコーディングし，数値に変えた
+- モデルはLSTMを使い，10-fold CV．learning rateは1e-3から1e-7までschedulerで減衰させた．0.1epochごとにロスを監視し，0.3epoch改善がなければlearning rateを0.1倍した．optimizerはAdamで，weight decayは1e-6とした．エポック数は6．
+- 共有kernelのCNNの予測とアンサンブルして提出した．
+- Transformerも試したが，インバランスデータを学習させるのが難しく，断念．
 
-2. ```scripts/baseline_{MODEL NAME}.py```を実行．
-実験をしたい場合は```scripts/baseline.ipynb```を推奨．
-これまでちゃんと計算を回したのはCNNとLSTM．
-Transformerは計算中．
-Flash Attention Transformerも試す．
-baselineは以下のノートブックを参考にした．もともとkerasで実装されていたものをpytorchで再実装した．
-https://www.kaggle.com/code/ahmedelfazouan/belka-1dcnn-starter-with-all-data
+## 14位の方のソリューション
 
+https://www.kaggle.com/competitions/leash-BELKA/discussion/518951
 
+先日参加したkaggleのセミナーに出ていたkaggle grand master のチーム
+
+- 未知のタンパク質に対応するモデルと，既知のタンパク質（与えられたデータ）に対応するモデルを2つ作り，最終的にアンサンブル
+- 未知のタンパク質に対応するモデルは，CV戦略を工夫していた．訓練データのタンパク質がバリデーションに入らないようにし，汎化性能を評価できるようにしていた．過学習がかなり早いらしく，0.01エポックずつロスを監視し，バリデーションの減少が止まったらすぐ学習を打ち切っていた．モデルはChemberta．
+- 既知のタンパク質に対応するモデルは，特徴量を工夫していた．SMILESのエンコーディングに加え，[ECFP https://qiita.com/tsugar/items/c8cbecefc3998b8179ce]という特徴量も作っていた．Chembertaの特徴量も使っていたが，性能向上には寄与していなかった．
+他のソリューションも，未知のタンパク質に対応するモデルを作っていた．
+
+## 反省，学び
+- 自分は未知のタンパク質のモデルなどは考えておらず，とりあえず全データを学習していただけだった．コンペの情報，スコアの算出方法などをしっかり見ておくべきだった．Discussionをしっかり読んでいなかったのも原因かもしれない．
+- CV戦略は大切．汎化性能を見れるように工夫するべき．データリークは起こさない．
+- Hold outはブレるのでCVは大切
+- Publicスコアは信用してはいけない．Trust your CV！自分はできていなかったけど．
+- 正しいBaselineの構築が大切．試行錯誤を早くできるようなBaselineが大事．
 
