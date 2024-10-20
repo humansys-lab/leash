@@ -4,6 +4,7 @@ Leash Bio - Predict New Medicines with BELKAの研究室リポです．
 https://www.kaggle.com/competitions/leash-BELKA
 
 最終成績：86/1946で銀メダル．
+https://www.kaggle.com/ihiratch/competitions
 
 ## 概要
 - タンパク質の結合性を予測するコンペ．
